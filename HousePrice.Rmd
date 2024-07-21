@@ -1,0 +1,357 @@
+---
+title: "DATA 303/473 Assignment 2"
+author: "Jiemin Huang"
+output:
+  pdf_document:
+    df_print: paged
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+\newpage
+
+## Assignment Questions
+
+**Q1.(26 marks)**   The dataset `fiat.csv`contains 1538 records on sales of used Fiat 500 cars in Italy.  The variables in the dataset are:
+
+*  `model`: Fiat 500 comes in several 'flavours' :'pop', 'lounge', 'sport'
+*  `power`: number of KW of the engine
+*  `age`: age of the car in number of days (at the time dataset was created)
+*  `km`: Distance travelled by the car in kilometers
+*  `owners`: number of previous owners
+*  `lat`: latitude of the seller (the price of cars in Italy varies from North to South of the country)
+*  `lon`: longitude of the seller 
+*  `price`: selling price (in Euro)
+
+The data are available on Nuku in the file `fiat.csv`.  They were sourced from Kaggle and can be found on: https://www.kaggle.com/paolocons/another-fiat-500-dataset-1538-rows.
+
+In this question, we are interested in identifying the key predictors of `price`, and in understanding how these predictors affect `price`. Model interpretability is important in this case. The initial steps in building a model for `price` are shown in the Appendix on pages 3 to 6.
+
+As there is evidence of non-normality and non-constant variance, a log-transformation for `price` is to be applied in the rest of the analyses.  Prepare the data as has been done in the Appendix, and use your new dataset to answer the questions below.
+
+```{r}
+library(dplyr)
+library(memisc)
+fiat<-read.csv("fiat.csv", header=T)
+str(fiat)
+##Changing owners and power into categorical variables as they have very few unique values
+fiat$owners<-as.factor(fiat$owners)
+fiat<-fiat%>%
+  mutate(power.cat=memisc::recode(power,"50-59"<-c(50:59),
+                               "60-69"<-c(60:69),
+                               "70-79"<-c(70:79)))%>%
+  dplyr::select(-power)
+str(fiat)
+```
+
+```{r, fig.align='center', fig.height = 4, fig.width = 8}
+##EDA
+library(psych); library(ggplot2); library(ape); library(gridExtra)
+fiat%>% 
+  dplyr::select(where(is.numeric))%>%  #select numerical variables (includes integers)
+  pairs.panels(method = "spearman", hist.col = "lightgreen", density = TRUE, ellipses = FALSE )
+
+a<-ggplot(fiat,aes(x=owners,y=price))+ geom_boxplot()
+b<-ggplot(fiat,aes(x=power.cat,y=price))+ geom_boxplot()
+grid.arrange(a,b, nrow=1)
+```
+
+```{r, fig.align='center', fig.height = 3.5, fig.width = 8}
+##Non-normality and non-constant variance check
+fit1<-lm(price ~ model + power.cat + age + km + owners + lat + lon, data=fiat)
+summary(fit1)
+```
+
+```{r}
+shapiro.test(fit1$res) ##Shapiro-Wilk test
+library(lmtest)
+bptest(fit1) ##Breusch-Pagan test
+
+##Non-linearity assessment
+library(ggplot2)
+library(gridExtra)
+a<-ggplot(fiat,aes(x=age, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Car age (days)", y="Price")+ theme_bw()
+b<-ggplot(fiat,aes(x=km, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Distance travelled (km)", y="Price")+ theme_bw()
+c<-ggplot(fiat,aes(x=lat, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Latitude", y="Price")+ theme_bw()
+d<-ggplot(fiat,aes(x=lon, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Longitude", y="Price")+ theme_bw()
+grid.arrange(a,b,c,d, nrow=2)
+
+###Multicollinearity assessment
+library(car)
+vif(fit1)
+```
+
+a.  **(4 marks)**  Fit a generalised additive model for `log(price)`, including all predictors used in `fit1` in the Appendix.  Use a smooth spline for each numerical predictor.  Comment on the non-linearity and significance of all smooth terms.
+
+```{r}
+library(mgcv)
+fit1.gam <- gam(log(price) ~ model + power.cat + s(age) + s(km) + owners 
+                + s(lat) + s(lon), data=fiat, method = "REML")
+summary(fit1.gam)
+```
+
+Now, let's comment on the non-linearity and significance of all smooth terms.
+
+The p-values of all the smooth terms are low, suggesting they are all significant and should be included in the model. The edf values indicate that all smooth terms have non-linear relationships with price.
+
+```{r}
+par(mfrow = c(2, 2))
+plot(fit1.gam)
+```
+
+
+b.  **(5 marks)** Perform a diagnostic check of regression assumptions and adequacy of basis functions for the model you fitted in part (a).  What conclusions do you draw from your results? 
+
+```{r}
+gam.check(fit1.gam)
+```
+
+The Q-Q plot still shows some evidence of non-normality, but histogram indicates normality. And there is no evidence for non-constant variance according to other two plots. 
+
+There is no evidence that more basic functions are needed for any of the smooth terms, since for all terms, edf << k', k_index is close to 1. 
+
+c.   **(4 marks)** For ease of interpretation, a linear model is preferred to a GAM.  Fit a linear model (using `lm`) for `log(price)` with predictors as shown in model `fit1`.  Based on your fitted model, give a mathematical interpretation of the effect of `age` on `price`. 
+
+```{r}
+fit1.ln <- lm(log(price) ~ model + power.cat + age + km + owners + lat + lon, data=fiat)
+summary(fit1.ln)
+```
+Based on your fitted model, give a mathematical interpretation of the effect of `age` on `price`.
+
+The effect of 'age' on 'price' is determined using $$ e^{\beta_{age}} - 1$$
+
+This gives $$ e^{-1.145e-04} - 1 = -1.15e-04$$
+
+Therefore, an increase in age by 1 unit is associated with a reduction in the expected price by $1.154e-04$, while holding other predictors constant.
+
+d.   **(5 marks)**  Use the `step` function to perform stepwise model selection for the model in part (c) based on $AIC$ and $BIC$, to determine whether any of the predictors can be excluded from the model. List the predictors included in your preferred model in each case and justify your answer.
+
+```{r}
+step(fit1.ln, direction = 'both')
+```
+```{r}
+step(fit1.ln, direction = 'both', k = log(nrow(fiat)))
+```
+According to the result, I would exclude 'owners' from the model. Excluding 'owners' results in the lowest value in AIC and BIC.
+
+e.  **(4 marks)**  It is known that the price of cars in Italy varies from North to South of the country.  You also suspect that the effect of `lat` varies by `model`, and you therefore investigate the interaction between `lat` and `model`.  Add the interaction `model:lat` to the preferred model based on $AIC$ in part (d). Obtain an interaction plot and use it to describe briefly the effect of `lat` on `log(price)`
+
+```{r}
+# the new model exclude 'owners'
+fit2.ln <- lm(log(price) ~ model + power.cat + age + km + lat + lon, data=fiat)
+summary(fit2.ln)
+fit2.interaction <- lm(log(price) ~ model + power.cat + age + km + lat + lon + model:lat, data=fiat)
+summary(fit2.interaction)
+```
+```{r}
+library(interactions)
+interact_plot(fit2.interaction, pred = lat, modx = model, colors = 'Qual1')
+```
+
+Based on the AIC and BIC values, I would select the model:log(price) ~ model + age + km + lat as the best model becuse it has lowest AIC and BIC values. The final model included 'model', 'age', 'km', 'lat'.
+
+f.  **(4 marks)** Obtain and print in a table, the $AIC$ and $BIC$ values for your $AIC$-based preferred model in part (d) and the model in part (f).  Based on these values, state whether or not you would include the interaction term in your final preferred model and justify your answer.
+
+#I think the question should be 'compare models in part (d) and part(e)'.
+```{r}
+library(pander)
+aic.gam.ln <- AIC(fit2.ln) # model in (d)
+aic.gam.interaction <- AIC(fit2.interaction) # model in (e)
+
+bic.gam.ln <- BIC(fit2.ln)
+bic.gam.interaction <- BIC(fit2.interaction)
+
+modname <- c("linear model without interaction", "linear model interaction")
+aicval <- c(aic.gam.ln, aic.gam.interaction)
+bicval <- c(bic.gam.ln, bic.gam.interaction)
+
+mod.compare <- data.frame(modname, aicval, bicval)
+pander(mod.compare, digits = 3, align = 'c')
+```
+The model with the lowest AIC value is the one that with interaction item. The model with the lowest BIC value is the one that without interaction item.  And I would prioritize simplicity and avoiding overfit, so, I think the model without interaction is better.
+
+Meanwhile, according to the results in (e), R-squared values and adjusted R-squared values show that interaction item does not improved model fit apparently. Thus, I think the model without interaction is better.
+
+**Q2. (14 marks)**  In this next question we'll focus on constructing a prediction model for the Fiat data using subset selection and shrinkage methods.
+
+a. **[6 marks ]** Use the `olsrr` package to perform best subset, forward and backward stepwise model selection for the Fiat data. In each case, use AIC as the model performance metric to base your selection on and list the predictors in your final model.
+
+```{r}
+#install.packages("olsrr")
+#install.packages("ISLR2")
+library(olsrr)
+best_subset_result <- ols_step_best_subset(fit1)
+best_subset_result
+```
+
+```{r}
+df_best <- best_subset_result$metrics  
+best_row_index <- which.min(df_best$aic)  
+best_row <- df_best[best_row_index, ]
+best_row
+```
+
+After performing best subset model selection, the final model contains 'model', 'age', 'km', 'lat' with lowest AIC value, 24779.961. 
+
+```{r}
+# Perform forward stepwise selection using AIC
+forward_stepwise <- ols_step_forward_aic(model = fit1)
+forward_stepwise$model
+```
+
+After performing forward stepwise model selection, the final model contains 'modelpop', 'modelsport', 'age', 'km', 'lat' with lowest AIC value, 24779.961. 
+
+```{r}
+backward_stepwise <- ols_step_backward_aic(model = fit1)
+backward_stepwise$model
+```
+
+After performing backward stepwise model selection, the final model contains 'modelpop', 'modelsport', 'age', 'km', 'lat' with lowest AIC value, 24779.961. 
+
+b. **[3 marks]**  Apply ridge regression to the Fiat data and use cross-validation to identify the "best" value, $\lambda_{MSEmin}$, for the penalty parameter $\lambda$.  In a table, print the coefficients for a model fitted  using $\lambda_{MSEmin}$ and a model fitted using $\lambda=0$.  Based on your table are there any predictors that you would consider for exclusion?  Explain your answer briefly. 
+
+```{r}
+x <- model.matrix(price ~., fiat)
+head(x)
+```
+```{r}
+x <- x[, -1]
+head(x)
+```
+```{r}
+y <- fiat$price
+#install.packages("glmnet")
+library(glmnet)
+ridge.mod <- glmnet(x, y, alpha = 0)
+plot(ridge.mod, xvar="lambda", label=TRUE)
+```
+```{r}
+set.seed(1)
+cv_ridge <- cv.glmnet(x = x, y = y, alpha = 0) 
+plot(cv_ridge)
+```
+```{r}
+lambda_min <- cv_ridge$lambda.min
+lambda_min
+```
+```{r}
+#Fit model using "best" lambda
+ridge.mod.best <-glmnet(x, y, alpha = 0,lambda = cv_ridge$lambda.min)
+ridge.mod.0 <-glmnet(x, y, alpha = 0,lambda = 0)
+# Produce table of coefficients of both models
+library(pander)
+pander(data.frame("Best" = coef(ridge.mod.best)[, 1], "lambda = 0" = coef(ridge.mod.0)[, 1]), 
+       col.names = c("Best", "lambda = 0"))
+```
+
+After applying ridge regression, all estimated coeﬀicients are non-zero, indicating that all predictors are required for the model, regardless of which value for $\lambda$ was used. A sensible choice is the “best” value, $\lambda_{MSEmin} = 173.2455$.
+
+c. **[3 marks]** Apply lasso regression to the Fiat data and use cross-validation to identify the "best" value, $\lambda_{MSEmin}$, for the penalty parameter $\lambda$.  In a table, print the coefficients for a model fitted  using $\lambda_{MSEmin}$ and a model fitted using $\lambda=0$.  Based on your table identify predictors that you would consider for exclusion.  Explain your answer briefly. 
+
+```{r}
+lasso.mod <- glmnet(x, y, alpha = 1)
+plot(lasso.mod, xvar="lambda", label=TRUE)
+```
+```{r}
+set.seed(1)
+cv_lasso <- cv.glmnet(x = x, y = y, alpha = 1) 
+plot(cv_lasso)
+```
+```{r}
+lambda_min <- cv_lasso$lambda.min
+lambda_min
+```
+```{r}
+#Fit model using "best" lambda
+lasso.mod.best <-glmnet(x, y, alpha = 1, lambda = cv_lasso$lambda.min)
+# Fit model using largest lambda = 0
+lasso.mod.0 <-glmnet(x, y, alpha = 1,lambda = 0)
+pander(data.frame("Best" = coef(lasso.mod.best)[, 1], "lambda = 0" = coef(lasso.mod.0)[, 1]),
+col.names = c("Best", "lambda = 0"))
+```
+
+After applyiing lasso regression, the “best” model from lasso regression included five predictors, since the coeﬀicient for 'modelsport', 'owners2', 'owners3', 'owners4', 'lon', 'power.cat60-69' were forced to zero. And the 'best' value $\lambda_{MSEmin} = 16.53712$.
+
+d. **[2 marks]**  Based on your results in parts (b) and (c), which of the two approaches, ridge regression or lasso regression, would you prefer to use for model selection.  Explain your answer briefly.
+
+The 'best' model from ridge regression included all predictors.However the cofficients would generally be smaller than those from the coefficients obtained without shrinkage. On the other hand, the “best” model from lasso regression included five predictors, since the coeﬀicient for 'modelsport', 'owners2', 'owners3', 'owners4', 'lon', 'power.cat60-69' were forced to zero. Given the contradicting results I would choose the 5-predictor model as the lasso model is more parsimonious than the ridge model. 
+
+
+**Assignment total: 40 marks**
+
+---------------
+
+### Appendix:  Data preparation and initial analysis for Question 1
+
+```{r}
+library(dplyr)
+library(memisc)
+fiat<-read.csv("fiat.csv", header=T)
+str(fiat)
+##Changing owners and power into categorical variables as they have very few unique values
+fiat$owners<-as.factor(fiat$owners)
+fiat<-fiat%>%
+  mutate(power.cat=memisc::recode(power,"50-59"<-c(50:59),
+                               "60-69"<-c(60:69),
+                               "70-79"<-c(70:79)))%>%
+  dplyr::select(-power)
+str(fiat)
+```
+
+\newpage
+
+```{r, fig.align='center', fig.height = 4, fig.width = 8}
+##EDA
+library(psych); library(ggplot2); library(ape); library(gridExtra)
+fiat%>% 
+  dplyr::select(where(is.numeric))%>%  #select numerical variables (includes integers)
+  pairs.panels(method = "spearman", hist.col = "lightgreen", density = TRUE, ellipses = FALSE )
+
+a<-ggplot(fiat,aes(x=owners,y=price))+ geom_boxplot()
+b<-ggplot(fiat,aes(x=power.cat,y=price))+ geom_boxplot()
+grid.arrange(a,b, nrow=1)
+```
+
+\newpage 
+
+
+```{r, fig.align='center', fig.height = 3.5, fig.width = 8}
+##Non-normality and non-constant variance check
+fit1<-lm(price ~ model + power.cat + age + km + owners + lat + lon, data=fiat)
+shapiro.test(fit1$res) ##Shapiro-Wilk test
+library(lmtest)
+bptest(fit1) ##Breusch-Pagan test
+
+##Non-linearity assessment
+library(ggplot2)
+library(gridExtra)
+a<-ggplot(fiat,aes(x=age, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Car age (days)", y="Price")+ theme_bw()
+b<-ggplot(fiat,aes(x=km, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Distance travelled (km)", y="Price")+ theme_bw()
+c<-ggplot(fiat,aes(x=lat, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Latitude", y="Price")+ theme_bw()
+d<-ggplot(fiat,aes(x=lon, y=price))+
+  geom_point()+ geom_smooth(method='loess')+
+  labs(x="Longitude", y="Price")+ theme_bw()
+grid.arrange(a,b,c,d, nrow=2)
+
+###Multicollinearity assessment
+library(car)
+vif(fit1)
+```
+
+
+
